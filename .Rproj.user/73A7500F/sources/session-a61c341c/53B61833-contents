@@ -1,0 +1,252 @@
+---
+title: "Project 2"
+author: "Keely Grice"
+date: "November 17, 2025"
+output: word_document
+toc: TRUE
+---
+
+```{r setup, include=FALSE, warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+library(scales)
+library(viridis)
+library(lintr)
+```
+# Function
+```{r, include = FALSE}
+#read data
+year1 <- read.csv("AQ_2018.csv")
+year2 <- read.csv("AQ_2019.csv")
+year3 <- read.csv("AQ_2020.csv")
+```
+
+```{r, echo = FALSE}
+#function to clean data
+cleaner <- function(df) {
+  #replace col names
+  names(df)[2] <- "max_CO"
+  names(df)[4] <- "mean_PM2.5"
+  names(df)[6] <- "max_Ozone"
+
+  #format date
+  df$Date <- as.Date(df$Date, format = "%m/%d/%Y")
+
+  #average by day and delete duplicate cols
+  df_clean <- df %>%
+    group_by(Date) %>%
+    summarise(
+      max_CO = mean(max_CO, na.rm = TRUE),
+      units_CO = first(units_CO),
+      mean_PM2.5 = mean(mean_PM2.5, na.rm = TRUE),
+      units_PM = first(units_PM),
+      max_Ozone = mean(max_Ozone, na.rm = TRUE),
+      units_O3 = first(units_O3)
+    ) %>%
+    ungroup()
+
+  #remove negative values, replace with 0
+  for (i in c(2, 4, 6)){
+    df_clean[, i][df_clean[, i] < 0] <- 0
+  }
+  return(df_clean)
+}
+```
+
+```{r, echo = FALSE}
+#apply function to data
+year1_clean <- cleaner(year1)
+year2_clean <- cleaner(year2)
+year3_clean <- cleaner(year3)
+```
+
+# Plot
+## CO and O3 Concentration by Month
+```{r data set up, echo = FALSE, warning = FALSE}
+#combine data
+all_data <- bind_rows(
+  year1_clean %>% mutate(Year = 1),
+  year2_clean %>% mutate(Year = 2),
+  year3_clean %>% mutate(Year = 3)
+)
+```
+
+```{r Month, echo = FALSE}
+#add month variable
+all_data <- all_data %>%
+  mutate(Month = month(Date, label = TRUE, abbr = TRUE))
+```
+
+```{r calculations, echo = FALSE, warning = FALSE}
+#calculate monthly average, se, and CI
+monthly_df <- all_data %>%
+  group_by(Month) %>%
+  summarise(
+    #for CO
+    mean_CO = mean(max_CO, na.rm = TRUE),
+    sd_CO   = sd(max_CO, na.rm = TRUE),
+    n_CO    = sum(!is.na(max_CO)),
+
+    #for O3
+    mean_O3 = mean(max_Ozone, na.rm = TRUE),
+    sd_O3   = sd(max_Ozone, na.rm = TRUE),
+    n_O3    = sum(!is.na(max_Ozone))
+  ) %>%
+  mutate(
+    #standard errors
+    se_CO = sd_CO / sqrt(n_CO),
+    se_O3 = sd_O3 / sqrt(n_O3),
+
+    #confidence intervals
+    CI_low_CO = mean_CO - 1.96 * se_CO,
+    CI_up_CO  = mean_CO + 1.96 * se_CO,
+    CI_low_O3 = mean_O3 - 1.96 * se_O3,
+    CI_up_O3  = mean_O3 + 1.96 * se_O3
+  )
+
+```
+
+```{r format, echo = FALSE, warning = FALSE}
+#reformat for ggplot
+plot_df <- bind_rows(
+  #for CO
+  monthly_df %>%
+    transmute(
+      Month,
+      Pollutant = "CO",
+      mean = mean_CO,
+      low = CI_low_CO,
+      up = CI_up_CO
+    ),
+  #For O3
+  monthly_df %>%
+    transmute(
+      Month,
+      Pollutant = "O3",
+      mean = mean_O3,
+      low  = CI_low_O3,
+      up   = CI_up_O3
+    )
+)
+```
+
+```{r Plot Unscaled, include = FALSE, warning = FALSE, message = FALSE}
+#plot CO and O3 concentrations, unscaled
+ggplot(plot_df,
+       aes(x = Month, y = mean, color = Pollutant, group = Pollutant)) +
+  geom_point(size = 3) +
+  geom_line(size = 1) +
+  geom_errorbar(aes(ymin = low, ymax = up), width = 0.15) +
+  labs(
+    x = "Month",
+    y = "Concentration",
+    color = "Pollutant",
+    title = "Monthly Average CO and O3 Concentrations (Averaged Over 3 Years)",
+    subtitle = "Error bars represent 95% confidence intervals"
+  ) +
+  theme_bw()
+```
+
+```{r The Plot, echo = FALSE, message = FALSE}
+#Plot comparing CO and O3 by month, scaled
+ggplot() +
+  # CO line, points, error bars
+  geom_line(
+    data = plot_df %>% filter(Pollutant == "CO"),
+    aes(Month, mean, color = "CO"),
+    size = 1
+  ) +
+  geom_point(
+    data = plot_df %>% filter(Pollutant == "CO"),
+    aes(Month, mean, color = "CO"),
+    size = 3
+  ) +
+  geom_errorbar(
+    data = plot_df %>% filter(Pollutant == "CO"),
+    aes(Month, ymin = low, ymax = up, color = "CO"),
+    width = 0.15
+  ) +
+
+  #O3 line, points, error bars, Scaled
+  geom_line(
+    data = plot_df %>% filter(Pollutant == "O3"),
+    aes(Month, mean * 20, color = "O3"),
+    size = 1
+  ) +
+  geom_point(
+    data = plot_df %>% filter(Pollutant == "O3"),
+    aes(Month, mean * 20, color = "O3"),
+    size = 3
+  ) +
+  geom_errorbar(
+    data = plot_df %>% filter(Pollutant == "O3"),
+    aes(Month, ymin = low * 20, ymax = up * 20, color = "O3"),
+    width = 0.15
+  ) +
+
+  # label axes
+  scale_y_continuous(
+    name = "CO concentration (ppm)",
+    sec.axis = sec_axis(~ . / 20, name = "O3 concentration (ppm)")
+  ) +
+
+  # graph labels and theme
+  labs(
+    title = "Monthly Average Maximum CO and O3 Concentrations (Averaged Over 3 Years)",
+    subtitle = "CO and O3 on Different Scales",
+    color = "Pollutant"
+  ) +
+  theme_bw()
+
+```
+
+## PM2.5 Concentration by Month
+```{r plot prep, echo = FALSE}
+# Compute monthly averages by year
+pm_monthly <- all_data %>%
+  group_by(Year, Month) %>%
+  summarise(
+    #set up mean, sd, and n
+    mean_PM = mean(mean_PM2.5, na.rm = TRUE),
+    sd_PM   = sd(mean_PM2.5, na.rm = TRUE),
+    n_PM    = sum(!is.na(mean_PM2.5)),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    #calculate se and CI
+    se_PM = sd_PM / sqrt(n_PM),
+    CI_low = mean_PM - 1.96 * se_PM,
+    CI_up  = mean_PM + 1.96 * se_PM
+  )
+```
+
+```{r Scatter Plot, include = FALSE, warning = FALSE}
+#scatter plot, not included
+ggplot(pm_monthly, aes(x = Month, y = mean_PM, color = factor(Year),
+                       group = Year)) +
+  geom_line(size = 1) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = CI_low, ymax = CI_up), width = 0.15) +
+  labs(
+    title = "Monthly Average PM2.5 Concentrations by Year",
+    x = "Month",
+    y = "PM2.5 Concentration (µg/m³)",
+    color = "Year"
+  ) +
+  theme_bw()
+```
+```{r Box Plot, echo = FALSE, warning = FALSE}
+#boxplot for PM2.5 by year
+ggplot(all_data, aes(x = Month, y = mean_PM2.5, fill = factor(Year))) +
+  geom_boxplot(outlier.alpha = 0.3) +
+  scale_fill_viridis_d(option = "D", direction = -1) + #color blind safe
+  labs(
+    title = "Monthly PM2.5 Daily Average Concentrations by Year",
+    x = "Month",
+    y = "PM2.5 Concentration (µg/m³)",
+    fill = "Year"
+  ) +
+  theme_bw()
+```
+
